@@ -9,7 +9,7 @@ import psutil
 import urllib3
 from base64 import b64encode
 from healthcheck import HealthCheck
-from jinja2 import Template
+from jinja2 import Template,Environment, FileSystemLoader
 from loguru import logger
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import time
@@ -34,7 +34,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     def sent_request(self):
         message, status_code, headers = health.run()
         try:
-            request_path = str(self.path).replace("\n", " ")
+            request_path = str(self.path).reprunlace("\n", " ")
             response_msg = http_codes_serializer(
                 response=json.loads(message), status_code=status_code
             )
@@ -64,23 +64,53 @@ def http_codes_serializer(response, status_code):
     return f"{json.loads(msg)} {code}"
 
 
-def create_config_file():
+def create_config_file(CustomConfigPath):
+    env = Environment(loader=FileSystemLoader(os.getcwd()))
     logger.info(f"Create Wazuh agent configuration for node {node_name}")
-    with open("ossec.jinja2") as file_:
-        template = Template(file_.read(), autoescape=True)
+    if CustomConfigPath == "":
+        logger.info("Using default config file ossec.jinja2")
+        template = env.get_template("ossec.jinja2")   
         config = template.render(
             join_manager_hostname=join_manager_worker,
             join_manager_port=join_manager_port,
             virus_total_key=virus_total_key,
         )
-    wazuh_config_file = open("/var/ossec/etc/ossec.conf", "w")
-    wazuh_config_file.write(f"{config} \n")
-    wazuh_config_file.close()
+        wazuh_config_file = open("/var/ossec/etc/ossec.conf", "w")
+        wazuh_config_file.write(f"{config} \n")
+        logger.info(f"Config file has been written to /var/ossec/etc/ossec.conf")
+        wazuh_config_file.close()
+    else:
+        logger.info(f"Using custom config file {CustomConfigPath}")
+        logger.info("current working directory is: " + os.getcwd())
+        # with open("custom-ossec.jinja2") as file_:
+        #     template = Template(file_.read(), autoescape=True)
+        #     config = template.render(
+        #         join_manager_hostname=join_manager_worker,
+        #         join_manager_port=join_manager_port,
+        #         virus_total_key=virus_total_key,
+        #         CustomConfigPath=CustomConfigPath,
+        #     )
+        #     wazuh_config_file = open("/var/ossec/etc/ossec.conf", "w")
+        #     wazuh_config_file.write(f"{config} \n")
+        #     logger.info(f"Config file has been written to /var/ossec/etc/ossec.conf")
+        #     wazuh_config_file.close()
+        template = env.get_template("custom-ossec.jinja2")
+        config = template.render(
+            join_manager_hostname=join_manager_worker,
+            join_manager_port=join_manager_port,
+            virus_total_key=virus_total_key,
+            CustomConfigPath=CustomConfigPath,
+        )
+        wazuh_config_file = open("/var/ossec/etc/ossec.conf", "w")
+        wazuh_config_file.write(f"{config} \n")
+        logger.info(f"Config file has been written to /var/ossec/etc/ossec.conf")
+        wazuh_config_file.close()
+        
     open("/var/ossec/etc/local_internal_options.conf", "wb").write(
         open("local_internal_options.jinja2", "rb").read()
     )
     logger.info(
-        "Configuration has been generated from template, starting Wazuh agent provisioning"
+        "Configuraconftion has been generated from template, starting Wazuh agent provisioning"
     )
 
 
@@ -321,12 +351,13 @@ if __name__ == "__main__":
     max_retry_count = os.environ.get("MAX_RETRY_COUNT", default=10)
     if not node_name:
         node_name = os.environ.get("HOSTNAME")
+    CustomConfigPath = os.environ.get("CustomConfigPath", default="")
     login_endpoint = "security/user/authenticate"
     base_url = f"{protocol}://{host}:{port}"
     login_url = f"{protocol}://{host}:{port}/{login_endpoint}"
     auth = f"{user}:{password}".encode()
     verify = False
-    create_config_file()
+    create_config_file(CustomConfigPath)
     agent_id, agent_key = add_agent(node_name)
     wazuh_agent_import_key(agent_key.encode())
     restart_wazuh_agent()
